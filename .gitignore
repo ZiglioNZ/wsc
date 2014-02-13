@@ -1,9 +1,4 @@
-target
-.classpath
-.project
-.settings
-*.iml
-*.ipr
-*.iws
-*.swp
-.DS_Store
+/.settings
+/.project
+/target
+/.classpath

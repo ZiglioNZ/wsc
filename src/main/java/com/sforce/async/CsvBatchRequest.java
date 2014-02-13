@@ -26,58 +26,69 @@
 
 package com.sforce.async;
 
-import com.sforce.ws.ConnectionException;
-import com.sforce.ws.parser.PullParserException;
-import com.sforce.ws.parser.XmlInputStream;
-import com.sforce.ws.parser.XmlOutputStream;
-import com.sforce.ws.transport.Transport;
-import com.sforce.ws.wsdl.Constants;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
+import com.sforce.ws.ConnectionException;
+import com.sforce.ws.parser.PullParserException;
+import com.sforce.ws.transport.Transport;
+
 /**
- * BatchRequest
+ * CSV batch request.
+ * 
+ * @author drobertson
+ * @since 188
  *
- * @author mcheenath
- * @since 160
  */
-public class BatchRequest {
+public class CsvBatchRequest {
 
-    private XmlOutputStream xmlStream;
-    private Transport transport;
+    private final OutputStream csvStream;
+    private final Transport transport;
+    private boolean isNew;
+    
+    private final String UTF8 = "UTF-8";
 
-    public BatchRequest(Transport transport, OutputStream out) throws IOException {
+    public CsvBatchRequest(Transport transport, OutputStream out) throws IOException {
         this.transport = transport;
-        xmlStream = new AsyncXmlOutputStream(out, false);
-        xmlStream.setPrefix("xsi", Constants.SCHEMA_INSTANCE_NS);
-        xmlStream.writeStartTag(BulkConnection.NAMESPACE, "sObjects");
+        this.csvStream = out;
+        
+        this.isNew = true;
     }
 
-    public void addSObject(SObject object) throws AsyncApiException {
+    public void addHeader(String[] columns) throws AsyncApiException {
+    	if (isNew) {
+    		addRow(columns);
+    	}
+    	else {
+            throw new AsyncApiException("Can't add header to populated CSV", AsyncExceptionCode.ClientInputError);
+    	}
+    }
+    
+    
+    public void addRow(String[] columns) throws AsyncApiException {
         try {
-            object.write(xmlStream);
+        	for (int i = 0; i < columns.length; ++i) {
+                if (i == 0) {
+                	addFirstColumn(columns[i]);
+                }
+                else {
+                	addColumn(columns[i]);
+                }
+        	}
+        	isNew = false;
         } catch (IOException e) {
-            throw new AsyncApiException("Failed to add SObject", AsyncExceptionCode.ClientInputError, e);
-        }
-    }
-
-    public void addSObjects(SObject[] objects) throws AsyncApiException {
-        for (SObject object : objects) {
-            addSObject(object);
+            throw new AsyncApiException("Failed to add row", AsyncExceptionCode.ClientInputError, e);
         }
     }
 
     public BatchInfo completeRequest() throws AsyncApiException {
         try {
-            xmlStream.writeEndTag(BulkConnection.NAMESPACE, "sObjects");
-            xmlStream.endDocument();
-            xmlStream.close();
+            csvStream.close();
             InputStream in = transport.getContent();
 
             if (transport.isSuccessful()) {
-                return loadBatchInfo(in);
+                return BatchRequest.loadBatchInfo(in);
             } else {
                 BulkConnection.parseAndThrowException(in);
             }
@@ -85,17 +96,22 @@ public class BatchRequest {
             throw new AsyncApiException("Failed to complete request", AsyncExceptionCode.ClientInputError, e);
         } catch (PullParserException e) {
             throw new AsyncApiException("Failed to complete request", AsyncExceptionCode.ClientInputError, e);
-        } catch (ConnectionException e) {
+		} catch (ConnectionException e) {
             throw new AsyncApiException("Failed to complete request", AsyncExceptionCode.ClientInputError, e);
-        }
+		}
         return null;
     }
-
-    static BatchInfo loadBatchInfo(InputStream in) throws PullParserException, IOException, ConnectionException {
-        BatchInfo info = new BatchInfo();
-        XmlInputStream xin = new XmlInputStream();
-        xin.setInput(in, "UTF-8");
-        info.load(xin, BulkConnection.typeMapper);
-        return info;
+    
+    private void addFirstColumn(String value) throws IOException {
+    	csvStream.write(",".getBytes(UTF8));
+    	addColumn(value);
     }
-}
+    
+    private void addColumn(String value) throws IOException {
+    	if (value != null) {
+        	csvStream.write("\"".getBytes(UTF8));
+        	csvStream.write(value.replace("\"", "\"\"").getBytes(UTF8));
+        	csvStream.write("\"".getBytes(UTF8));
+    	}
+    }
+} 
